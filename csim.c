@@ -1,5 +1,6 @@
 #include "cachelab.h"
 #include "errno.h"
+#include "unistd.h"
 #include "getopt.h"
 #include "stdint.h"
 #include "stdio.h"
@@ -8,8 +9,8 @@
 //[set1(line1,lie2), set2(line...)]
 typedef struct {
     int valid;
-    int tag;
-    int accessCount
+    uint64_t tag;
+    uint64_t accessCount;
 } line;
 
 typedef line *entryLine;
@@ -24,7 +25,7 @@ typedef struct {
 } result;
 
 // init a cache(muti sets)
-entrySet initializeCache(int S, int E) {
+entrySet initializeCache(uint64_t S, uint64_t E) {
     entrySet cache;
 
     // here use calloc but not malloc to tackle the default(S=0,E=0)
@@ -44,7 +45,7 @@ entrySet initializeCache(int S, int E) {
 }
 
 // release mem of a cache
-void realseMem(entrySet cache, int S, int E) {
+void realseMem(entrySet cache, uint64_t S, uint64_t E) {
     for (int i = 0; i < S; ++i) {
         free(cache[i]);
     }
@@ -52,90 +53,88 @@ void realseMem(entrySet cache, int S, int E) {
 }
 
 // hit/miss/eviction count
-result HME(entryLine tgtLine, result Res, int E, int tag, int verbose) {
-    int oldest = INT64_MAX;
-    int newest = 0;
-    int oldestNum = INT64_MAX;
+result HME(entryLine tgtLine, result Res, uint64_t E, uint64_t tag, int verbose) {
+   
+    uint64_t oldest = UINT64_MAX;
+    uint64_t newest = 0;
+    uint64_t oldestNum = UINT64_MAX;
 
-    int hit = 0;
-
-    for (int i = 0; i < E; i++) {
-        
-        //hit
-        if(tgtLine[i].tag == tag && tgtLine[i].valid){
-            if(verbose) printf("hit!\n");
+    uint64_t hit = 0;
+    uint64_t i;
+    for (i = 0; i < E; ++i) {
+        // hit
+        if (tgtLine[i].tag == tag && tgtLine[i].valid) {
+            if (verbose) printf("hit!\n");
             hit = 1;
             Res.hit++;
             tgtLine[i].accessCount++;
             break;
         }
     }
-        //miss
-        if(hit == 0){
-            if(verbose) printf("miss!\n");
-            Res.miss++;
 
-            //search for the oldest block
-            int i;
-            for(int i = 1;i<E;i++){
-                if(tgtLine[i].accessCount < oldest){
-                    
-                    //set current access as oldest and record
-                    oldest = tgtLine[i].accessCount;
-                    oldestNum =i;
-                }
-                if(tgtLine[i].accessCount>newest){
-                    newest = tgtLine[i].accessCount;
-                }
+    // miss
+    if (hit == 0) {
+        if (verbose) printf("miss!\n");
+        Res.miss++;
+
+        // search for the oldest block
+        for (i = 0; i < E; ++i) {
+            if (tgtLine[i].accessCount < oldest) {
+                // set current access as oldest and record
+                oldest = tgtLine[i].accessCount;
+                oldestNum = i;
             }
-
-            tgtLine[oldestNum].accessCount = newest+1;
-            tgtLine[oldestNum].tag = tag;
-
-            //if oldest is valid the eviction
-            if(tgtLine[oldestNum].valid){
-                if(verbose) printf("eviction!\n");
-                Res.evic++;
-            }
-
-            //if invalid then replace as normal
-            else{
-                if(verbose) printf("\n");
-                //update this block as valid
-                tgtLine[oldestNum].valid = 1;
+            if (tgtLine[i].accessCount > newest) {
+                newest = tgtLine[i].accessCount;
             }
         }
+
+        tgtLine[oldestNum].accessCount = newest + 1;
+        tgtLine[oldestNum].tag = tag;
+
+        // if oldest is valid the eviction
+        if (tgtLine[oldestNum].valid) {
+            if (verbose) printf(" and eviction!\n");
+            Res.evic++;
+        }
+
+        // if invalid then replace as normal
+        else {
+            if (verbose) printf("\n");
+            // update this block as valid
+            tgtLine[oldestNum].valid = 1;
+        }
+    }
     return Res;
 }
 
 // CORE FUNC-- test his/mis/evc
-result readTest(FILE *tracefile, entrySet cache, int s, int S, int E, int b, int verbose) {
+result readTest(FILE *tracefile, entrySet cache, uint64_t s, uint64_t S, uint64_t E, uint64_t b,
+                uint64_t verbose) {
     result Res = {0, 0, 0};
 
     char op;
-    unsigned int address;
-    // ignore size
-    int size;
+    uint64_t address;
 
-    while ((fscanf(tracefile, " %c %x,%d", &op, &address, &size)) > 0) {
+    while((fscanf(tracefile, " %c %lx%*[^\n]", &op, &address)) == 2) {
         // ignore Instruction load
         if (op == 'I')
             continue;
         else {
-            int indexSet_mask = (1 << s) - 1;
-            int indexSet = (address >> b) & indexSet_mask;
-            int tag = (address >> b) >> s;
+            uint64_t indexSet_mask = (1 << s) - 1;
+            uint64_t indexSet = (address >> b) & indexSet_mask;
+            uint64_t tag = (address >> b) >> s;
 
             entryLine tgtLine = cache[indexSet];
 
             if (op == 'L' || op == 'S') {
-                if (verbose) printf("%c %x", op, address);
+                if (verbose) printf("%c %lx ", op, address);
                 Res = HME(tgtLine, Res, E, tag, verbose);
             }
 
             // consider M as L then S
             else if (op == 'M') {
-                if (verbose) printf("%c %x", op, address);
+                if (verbose) printf("%c %lx ", op, address);
 
                 // L, can be h/m/e
                 Res = HME(tgtLine, Res, E, tag, verbose);
@@ -168,10 +167,10 @@ int main(int argc, char *const argv[]) {
     entrySet cache = NULL;
 
     int verbose = 0;  // 1 to switch to verbose mode, default 0
-    int s = 0;        // number of sets ndex's bits
-    int S = 0;        // number of sets
-    int E = 0;        // number of lines
-    int b = 0;        // number of blocks index's bits
+    uint64_t s = 0;        // number of sets ndex's bits
+    uint64_t S = 0;        // number of sets
+    uint64_t E = 0;        // number of lines
+    uint64_t b = 0;        // number of blocks index's bits
 
     // get args
     char tmp;
@@ -193,32 +192,32 @@ int main(int argc, char *const argv[]) {
             // s for bits of set_num
             case 's': {
                 // assuming there's at least 2 sets(bit 1)
-                if (atoi(optarg) <= 0) {
+                if (atol(optarg) <= 0) {
                     printf("%s", help_message);
                     exit(0);
                 }
                 // s is bits and S = 2^s = 1<<s
-                s = atoi(optarg);
+                s = atol(optarg);
                 S = 1 << s;
             }
 
             // E for num of lins in a set
             case 'E': {
-                if (atoi(optarg) <= 0) {
+                if (atol(optarg) <= 0) {
                     printf("%s", help_message);
                     exit(0);
                 }
-                E = atoi(optarg);
+                E = atol(optarg);
                 break;
             }
 
             // b for number of bytes in a DRAM section
             case 'b': {
-                if (atoi(optarg) <= 0) {
+                if (atol(optarg) <= 0) {
                     printf("%s", help_message);
                     exit(0);
                 }
-                b = atoi(optarg);
+                b = atol(optarg);
                 break;
             }
 
@@ -238,7 +237,13 @@ int main(int argc, char *const argv[]) {
         }
     }
 
-    // crate cache, test and get result into result struct
+    //invalid input
+    if (s == 0 || b ==0 || E == 0 || tracefile == NULL){
+        printf("%s", help_message);
+        exit(0);
+    }
+
+    // crate cache, test and get result uint64_to result struct
     cache = initializeCache(S, E);
 
     Result = readTest(tracefile, cache, s, S, E, b, verbose);
@@ -246,5 +251,6 @@ int main(int argc, char *const argv[]) {
     realseMem(cache, S, E);
 
     printSummary(Result.hit, Result.miss, Result.evic);
+
     return 0;
 }
