@@ -1,10 +1,10 @@
 #include "cachelab.h"
 #include "errno.h"
-#include "unistd.h"
 #include "getopt.h"
 #include "stdint.h"
 #include "stdio.h"
 #include "stdlib.h"
+#include "unistd.h"
 
 //[set1(line1,lie2), set2(line...)]
 typedef struct {
@@ -53,13 +53,15 @@ void realseMem(entrySet cache, uint64_t S, uint64_t E) {
 }
 
 // hit/miss/eviction count
-result HME(entryLine tgtLine, result Res, uint64_t E, uint64_t tag, int verbose) {
-   
+result HME(entryLine tgtLine, result Res, uint64_t E, uint64_t tag,
+           int verbose) {
     uint64_t oldest = UINT64_MAX;
     uint64_t newest = 0;
     uint64_t oldestNum = UINT64_MAX;
 
     uint64_t hit = 0;
+
+    // i match the type of E: 64bit unsigned
     uint64_t i;
     for (i = 0; i < E; ++i) {
         // hit
@@ -77,7 +79,7 @@ result HME(entryLine tgtLine, result Res, uint64_t E, uint64_t tag, int verbose)
         if (verbose) printf("miss!\n");
         Res.miss++;
 
-        // search for the oldest block
+        // search for the oldest block(not recently used)
         for (i = 0; i < E; ++i) {
             if (tgtLine[i].accessCount < oldest) {
                 // set current access as oldest and record
@@ -85,20 +87,24 @@ result HME(entryLine tgtLine, result Res, uint64_t E, uint64_t tag, int verbose)
                 oldestNum = i;
             }
             if (tgtLine[i].accessCount > newest) {
+                // update newest if there's bigger number of cnt
                 newest = tgtLine[i].accessCount;
             }
         }
 
+        // replace the oldest block and cnt as newest++ to signify just accessd
         tgtLine[oldestNum].accessCount = newest + 1;
         tgtLine[oldestNum].tag = tag;
 
-        // if oldest is valid the eviction
+        // if oldest is valid then ther was an eviction
+        // if it was valid ,now still valid , no change
         if (tgtLine[oldestNum].valid) {
             if (verbose) printf(" and eviction!\n");
             Res.evic++;
         }
 
         // if invalid then replace as normal
+        // change valid to 1
         else {
             if (verbose) printf("\n");
             // update this block as valid
@@ -109,24 +115,31 @@ result HME(entryLine tgtLine, result Res, uint64_t E, uint64_t tag, int verbose)
 }
 
 // CORE FUNC-- test his/mis/evc
-result readTest(FILE *tracefile, entrySet cache, uint64_t s, uint64_t S, uint64_t E, uint64_t b,
-                uint64_t verbose) {
+result readTest(FILE *tracefile, entrySet cache, uint64_t s, uint64_t S,
+                uint64_t E, uint64_t b, uint64_t verbose) {
     result Res = {0, 0, 0};
 
     char op;
     uint64_t address;
 
-    while((fscanf(tracefile, " %c %lx%*[^\n]", &op, &address)) == 2) {
+    // special fscanf format to get input info
+    //%*[^\n] means discard read chars before \n and after %lx
+    while ((fscanf(tracefile, " %c %lx%*[^\n]", &op, &address)) == 2) {
         // ignore Instruction load
         if (op == 'I')
             continue;
         else {
+            // 2^n-1 -> 000...01111 as mask(n = 4)
             uint64_t indexSet_mask = (1 << s) - 1;
+            // get the addr in cache the &mask to get set addr/index
             uint64_t indexSet = (address >> b) & indexSet_mask;
+            // get tag
             uint64_t tag = (address >> b) >> s;
 
+            // get set number to look for target line in that set
             entryLine tgtLine = cache[indexSet];
 
+            // L or S has only one access to cache
             if (op == 'L' || op == 'S') {
                 if (verbose) printf("%c %lx ", op, address);
                 Res = HME(tgtLine, Res, E, tag, verbose);
@@ -167,10 +180,10 @@ int main(int argc, char *const argv[]) {
     entrySet cache = NULL;
 
     int verbose = 0;  // 1 to switch to verbose mode, default 0
-    uint64_t s = 0;        // number of sets ndex's bits
-    uint64_t S = 0;        // number of sets
-    uint64_t E = 0;        // number of lines
-    uint64_t b = 0;        // number of blocks index's bits
+    uint64_t s = 0;   // number of sets index's bits
+    uint64_t S = 0;   // number of sets
+    uint64_t E = 0;   // number of lines
+    uint64_t b = 0;   // number of blocks index's bits
 
     // get args
     char tmp;
@@ -237,8 +250,8 @@ int main(int argc, char *const argv[]) {
         }
     }
 
-    //invalid input
-    if (s == 0 || b ==0 || E == 0 || tracefile == NULL){
+    // invalid input
+    if (s == 0 || b == 0 || E == 0 || tracefile == NULL) {
         printf("%s", help_message);
         exit(0);
     }
